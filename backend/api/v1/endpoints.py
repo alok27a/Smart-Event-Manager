@@ -30,9 +30,10 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncIOMot
 async def read_users_me(current_user: User = Depends(auth_service.get_current_user)):
     return UserPublic(id=str(current_user.id), email=current_user.email, preferences=current_user.preferences)
 
-@router.post("/events/parse", response_model=ConflictCheckResponse, status_code=201, tags=["Events"])
-async def parse_and_create_event(event_input: EventInput, current_user: User = Depends(auth_service.get_current_user), db: AsyncIOMotorDatabase = Depends(get_database)):
-    return await event_service.create_or_update_event(db, event_input.text, current_user=current_user)
+@router.post("/events", response_model=ConflictCheckResponse, status_code=201, tags=["Events"])
+async def create_new_event(event_input: EventInput, current_user: User = Depends(auth_service.get_current_user), db: AsyncIOMotorDatabase = Depends(get_database)):
+    """Parse text to create a new event."""
+    return await event_service.create_event(db, event_input.text, current_user=current_user)
 
 @router.get("/events", response_model=List[EventPublic], tags=["Events"])
 async def list_all_events(current_user: User = Depends(auth_service.get_current_user), db: AsyncIOMotorDatabase = Depends(get_database)):
@@ -60,6 +61,17 @@ async def confirm_an_event(event_id: str, current_user: User = Depends(auth_serv
     event = await event_service.confirm_event(db, event_id, owner_id=current_user.id)
     if not event: raise HTTPException(status_code=404, detail="Event not found or not updated")
     return EventPublic(id=str(event.id), owner_id=str(event.owner_id), **event.model_dump(exclude={'id', 'owner_id'}))
+
+@router.put("/events/{event_id}/reschedule", response_model=EventPublic, tags=["Event Actions"])
+async def reschedule_an_event(event_id: str, event_input: EventInput, current_user: User = Depends(auth_service.get_current_user), db: AsyncIOMotorDatabase = Depends(get_database)):
+    """Reschedule an event by its ID using natural language for the new time/details."""
+    event = await event_service.reschedule_event(db, event_id, event_input.text, current_user)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found or not updated")
+    
+    public_event = EventPublic(id=str(event.id), owner_id=str(event.owner_id), **event.model_dump(exclude={'id', 'owner_id'}))
+    return public_event
+
 
 @router.post("/events/{event_id}/reminders", response_model=EventPublic, tags=["Event Actions"])
 async def add_a_reminder(event_id: str, reminder: Reminder, current_user: User = Depends(auth_service.get_current_user), db: AsyncIOMotorDatabase = Depends(get_database)):

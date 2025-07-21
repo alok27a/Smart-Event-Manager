@@ -26,7 +26,7 @@ export function CalendarDashboard({ token, onLogout }) {
   const [isParsing, setIsParsing] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [suggestedTimes, setSuggestedTimes] = useState([]);
-  const [conflictingEventTitle, setConflictingEventTitle] = useState('');
+  const [conflictingEvent, setConflictingEvent] = useState(null);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const toast = useToast();
 
@@ -51,17 +51,14 @@ export function CalendarDashboard({ token, onLogout }) {
     fetchEvents();
   }, [fetchEvents]);
 
-  const handleParseEvent = async (textToParse = eventText) => {
-    if (!textToParse.trim()) return;
+  const handleCreateEvent = async () => {
+    if (!eventText.trim()) return;
     setIsParsing(true);
     setSuggestedTimes([]);
-    
-    if (!textToParse.startsWith('reschedule')) {
-        setConflictingEventTitle('');
-    }
+    setConflictingEvent(null);
 
     try {
-      const result = await api.parseEvent(textToParse, token);
+      const result = await api.createEvent(eventText, token);
       
       if (result.is_conflict) {
         toast({
@@ -72,7 +69,7 @@ export function CalendarDashboard({ token, onLogout }) {
           isClosable: true,
         });
         setSuggestedTimes(result.suggested_times || []);
-        setConflictingEventTitle(result.created_event.title);
+        setConflictingEvent(result.created_event); // Store the conflicting event
       } else {
         toast({
           title: 'Event Processed',
@@ -82,7 +79,6 @@ export function CalendarDashboard({ token, onLogout }) {
           isClosable: true,
         });
         setEventText('');
-        setConflictingEventTitle('');
       }
       
       fetchEvents();
@@ -98,10 +94,22 @@ export function CalendarDashboard({ token, onLogout }) {
     setIsParsing(false);
   };
   
-  const handleSuggestionClick = (time) => {
-    const newText = `reschedule ${conflictingEventTitle} to ${format(parseISO(time), 'PPP p')}`;
-    setEventText(newText);
-    handleParseEvent(newText);
+  const handleSuggestionClick = async (time) => {
+    if (!conflictingEvent) return;
+    setIsParsing(true);
+    setSuggestedTimes([]);
+    
+    try {
+        // Reschedule the conflicting event to the new time
+        await api.rescheduleEvent(conflictingEvent.id, `to ${format(parseISO(time), 'PPP p')}`, token);
+        toast({ title: 'Event Rescheduled Successfully', status: 'success', duration: 3000 });
+        setConflictingEvent(null);
+        setEventText('');
+        fetchEvents();
+    } catch (error) {
+        toast({ title: 'Error Rescheduling', description: error.message, status: 'error', duration: 5000 });
+    }
+    setIsParsing(false);
   };
 
   const handleEventClick = (event) => {
@@ -112,6 +120,7 @@ export function CalendarDashboard({ token, onLogout }) {
   const handleEventUpdate = (updatedEvent) => {
     setEvents(prevEvents => prevEvents.map(e => e.id === updatedEvent.id ? updatedEvent : e));
     setSelectedEvent(updatedEvent);
+    fetchEvents(); // Refresh all events to ensure consistency
   };
   
   const handleEventDelete = (deletedEventId) => {
@@ -129,12 +138,12 @@ export function CalendarDashboard({ token, onLogout }) {
           <Text mb={2}>Create an event using natural language:</Text>
           <HStack>
             <Input
-              placeholder="e.g., 'reschedule soccer practice to next Tuesday at 5pm at the park'"
+              placeholder="e.g., 'soccer practice next Tuesday at 5pm at the park'"
               value={eventText}
               onChange={(e) => setEventText(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleParseEvent()}
+              onKeyPress={(e) => e.key === 'Enter' && handleCreateEvent()}
             />
-            <Button colorScheme="teal" onClick={() => handleParseEvent()} isLoading={isParsing}>
+            <Button colorScheme="teal" onClick={handleCreateEvent} isLoading={isParsing}>
               Create Event
             </Button>
           </HStack>

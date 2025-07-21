@@ -33,6 +33,8 @@ import { api } from '../api';
 export function EventDetailsModal({ isOpen, onClose, event, onUpdate, onDelete, token }) {
     const [reminderMinutes, setReminderMinutes] = useState(30);
     const [shareEmail, setShareEmail] = useState('');
+    const [isRescheduling, setIsRescheduling] = useState(false);
+    const [rescheduleText, setRescheduleText] = useState('');
     const toast = useToast();
     const { isOpen: isAlertOpen, onOpen: onAlertOpen, onClose: onAlertClose } = useDisclosure();
     const cancelRef = React.useRef();
@@ -81,6 +83,20 @@ export function EventDetailsModal({ isOpen, onClose, event, onUpdate, onDelete, 
         } catch(error) {
             toast({ title: 'Error deleting event', description: error.message, status: 'error', duration: 3000 });
             onAlertClose();
+        }
+    };
+
+    const handleReschedule = async () => {
+        if (!rescheduleText) return;
+        try {
+            const updatedEvent = await api.rescheduleEvent(event.id, rescheduleText, token);
+            onUpdate(updatedEvent);
+            toast({ title: 'Event Rescheduled', status: 'success', duration: 2000 });
+            setIsRescheduling(false);
+            setRescheduleText('');
+            onClose();
+        } catch (error) {
+            toast({ title: 'Error rescheduling', description: error.message, status: 'error', duration: 3000 });
         }
     };
 
@@ -138,12 +154,31 @@ export function EventDetailsModal({ isOpen, onClose, event, onUpdate, onDelete, 
                                 </HStack>
                             </Box>
 
+                            {isRescheduling && (
+                                <Box w="full" pt={4} borderTop="1px" borderColor="gray.200">
+                                    <Heading size="sm" mb={2}>Reschedule Event</Heading>
+                                    <HStack>
+                                        <Input 
+                                            placeholder="e.g., 'to tomorrow at 5pm'" 
+                                            value={rescheduleText} 
+                                            onChange={(e) => setRescheduleText(e.target.value)} 
+                                        />
+                                        <Button onClick={handleReschedule}>Submit</Button>
+                                    </HStack>
+                                </Box>
+                            )}
+
                         </VStack>
                     </ModalBody>
                     <ModalFooter justifyContent="space-between">
-                        <Button colorScheme="red" variant="outline" onClick={onAlertOpen}>Delete Event</Button>
+                        <HStack>
+                            <Button colorScheme="red" variant="outline" onClick={onAlertOpen}>Delete</Button>
+                            <Button variant="outline" onClick={() => setIsRescheduling(!isRescheduling)}>
+                                {isRescheduling ? 'Cancel Reschedule' : 'Reschedule'}
+                            </Button>
+                        </HStack>
                         <Box>
-                            {event.state === 'DRAFT' && <Button colorScheme="green" mr={3} onClick={() => handleStatusChange('CONFIRMED')}>Confirm Event</Button>}
+                            {event.state === 'DRAFT' && <Button colorScheme="green" mr={3} onClick={() => handleStatusChange('CONFIRMED')}>Confirm</Button>}
                             <Button variant="ghost" onClick={onClose}>Close</Button>
                         </Box>
                     </ModalFooter>

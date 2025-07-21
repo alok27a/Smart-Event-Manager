@@ -7,26 +7,14 @@ from models.event import Event, EventPublic, ConflictCheckResponse, Reminder, Sh
 from services import nlp_service, calendar_service, assistant_service
 from models.user import User
 
-async def create_or_update_event(db: AsyncIOMotorDatabase, text: str, current_user: User) -> ConflictCheckResponse:
-    # 1. Parse the event and intent using the LLM
+async def create_event(db: AsyncIOMotorDatabase, text: str, current_user: User) -> ConflictCheckResponse:
+    # 1. Parse the event using the LLM
     parsed_details = await nlp_service.parse_event_from_text(text)
     
     # 2. Agentic Step: Categorize the event
     category = assistant_service.categorize_event(parsed_details.title)
-
-    # 3. Reschedule Logic
-    if parsed_details.is_reschedule:
-        # Try to find the event to update
-        existing_event_doc = await db.events.find_one({
-            "owner_id": current_user.id,
-            "title": {"$regex": parsed_details.title.split()[0], "$options": "i"}
-        })
-
-        if existing_event_doc:
-            # Delete the old event
-            await db.events.delete_one({"_id": existing_event_doc["_id"]})
     
-    # Create a new event (either brand new or as a replacement for a rescheduled one)
+    # 3. Create a new event
     event_instance = await _create_new_event(db, parsed_details, category, current_user)
 
     # 4. Check for conflicts against the user's other events
@@ -85,7 +73,8 @@ async def _create_new_event(db: AsyncIOMotorDatabase, parsed_details: nlp_servic
         }]
     )
     
-    await db.events.insert_one(event_data.model_dump(by_alias=True))
+    insert_result = await db.events.insert_one(event_data.model_dump(by_alias=True))
+    event_data.id = insert_result.inserted_id
     return event_data
 
 
@@ -115,6 +104,33 @@ async def confirm_event(db: AsyncIOMotorDatabase, event_id: str, owner_id: Objec
     )
     if update_result.modified_count:
         return await get_event_by_id(db, event_id, owner_id)
+    return None
+
+async def reschedule_event(db: AsyncIOMotorDatabase, event_id: str, text: str, current_user: User) -> Optional[Event]:
+    original_event = await get_event_by_id(db, event_id, current_user.id)
+    if not original_event:
+        return None
+
+    parsed_details = await nlp_service.parse_event_from_text(text)
+
+    update_data = {
+        "start_time": parsed_details.start_time,
+        "end_time": parsed_details.end_time,
+        "location": parsed_details.location or original_event.location,
+        "notes": parsed_details.notes or original_event.notes,
+        "state": EventState.DRAFT,
+        "is_confirmed": False,
+    }
+    
+    update_result = await db.events.update_one(
+        {"_id": ObjectId(event_id)},
+        {
+            "$set": update_data,
+            "$push": {"timeline": {"timestamp": datetime.utcnow().isoformat(), "action": "Event Rescheduled", "details": f"New time: {parsed_details.start_time}"}}
+        }
+    )
+    if update_result.modified_count:
+        return await get_event_by_id(db, event_id, current_user.id)
     return None
 
 
