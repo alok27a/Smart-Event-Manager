@@ -1,6 +1,7 @@
 from typing import Dict, Optional, List
 from datetime import datetime
 from bson import ObjectId
+from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from models.event import Event, EventPublic, ConflictCheckResponse, Reminder, SharePayload, EventState, StatusUpdate
 from services import nlp_service, calendar_service, assistant_service
@@ -16,41 +17,32 @@ async def create_or_update_event(db: AsyncIOMotorDatabase, text: str, current_us
     # 3. Reschedule Logic
     if parsed_details.is_reschedule:
         # Try to find the event to update
-        # A more robust search would use fuzzy matching or more context
         existing_event_doc = await db.events.find_one({
             "owner_id": current_user.id,
-            "title": {"$regex": parsed_details.title.split()[0], "$options": "i"} # Simple search by first word
+            "title": {"$regex": parsed_details.title.split()[0], "$options": "i"}
         })
 
         if existing_event_doc:
-            # Update the existing event
-            update_data = {
-                "start_time": parsed_details.start_time,
-                "end_time": parsed_details.end_time,
-                "location": parsed_details.location or existing_event_doc.get("location"),
-                "notes": parsed_details.notes or existing_event_doc.get("notes"),
-                "category": category,
-                "timeline": existing_event_doc.get("timeline", []) + [{
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "action": "Event Rescheduled",
-                    "details": f"New time: {parsed_details.start_time}"
-                }]
-            }
-            await db.events.update_one({"_id": existing_event_doc["_id"]}, {"$set": update_data})
-            updated_doc = await db.events.find_one({"_id": existing_event_doc["_id"]})
-            event_instance = Event(**updated_doc)
-        else:
-            # If no event found to reschedule, create a new one
-            event_instance = await _create_new_event(db, parsed_details, category, current_user)
-    else:
-        # Create a new event
-        event_instance = await _create_new_event(db, parsed_details, category, current_user)
+            # Delete the old event
+            await db.events.delete_one({"_id": existing_event_doc["_id"]})
+    
+    # Create a new event (either brand new or as a replacement for a rescheduled one)
+    event_instance = await _create_new_event(db, parsed_details, category, current_user)
 
     # 4. Check for conflicts against the user's other events
     user_events_cursor = db.events.find({"owner_id": current_user.id})
     user_events = [Event(**doc) async for doc in user_events_cursor]
     conflicting_event = calendar_service.check_conflict(event_instance, user_events)
     
+    suggested_times = []
+    if conflicting_event:
+        duration = event_instance.end_time - event_instance.start_time
+        suggested_times = calendar_service.find_next_available_slots(
+            start_time=conflicting_event.end_time,
+            duration=duration,
+            existing_events=user_events
+        )
+
     conflict_details_str = f"Conflicts with '{conflicting_event.title}'" if conflicting_event else None
     
     # Convert to public model for response
@@ -68,7 +60,7 @@ async def create_or_update_event(db: AsyncIOMotorDatabase, text: str, current_us
         timeline=event_instance.timeline
     )
 
-    return ConflictCheckResponse(is_conflict=bool(conflicting_event), conflict_details=conflict_details_str, created_event=public_event)
+    return ConflictCheckResponse(is_conflict=bool(conflicting_event), conflict_details=conflict_details_str, created_event=public_event, suggested_times=suggested_times)
 
 
 async def _create_new_event(db: AsyncIOMotorDatabase, parsed_details: nlp_service.ParsedEventDetails, category: assistant_service.EventCategory, current_user: User) -> Event:
@@ -175,3 +167,7 @@ async def update_event_status(db: AsyncIOMotorDatabase, event_id: str, status_up
     if update_result.modified_count:
         return await get_event_by_id(db, event_id, owner_id)
     return None
+
+async def delete_event(db: AsyncIOMotorDatabase, event_id: str, owner_id: ObjectId) -> bool:
+    delete_result = await db.events.delete_one({"_id": ObjectId(event_id), "owner_id": owner_id})
+    return delete_result.deleted_count > 0

@@ -1,7 +1,8 @@
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware  # ✅ Import CORS middleware
 from api.v1 import endpoints
-from core.database import close_mongo_connection, connect_to_mongo # Updated import
+from core.database import close_mongo_connection, connect_to_mongo
 
 # Create a FastAPI app instance
 app = FastAPI(
@@ -10,10 +11,18 @@ app = FastAPI(
     version="2.4.1"
 )
 
+# ✅ Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # ✅ React dev server origin
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Add startup and shutdown event handlers
 app.add_event_handler("startup", connect_to_mongo)
 app.add_event_handler("shutdown", close_mongo_connection)
-
 
 # Include the router from the endpoints module
 app.include_router(endpoints.router, prefix="/api/v1")

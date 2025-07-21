@@ -62,6 +62,7 @@ class ConflictCheckResponse(BaseModel):
     is_conflict: bool
     conflict_details: Optional[str] = None
     created_event: EventPublic
+    suggested_times: Optional[List[datetime]] = None # New field for suggestions
 
 class SharePayload(BaseModel):
     summary: str

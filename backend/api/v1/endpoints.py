@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Body, Depends
+from fastapi import APIRouter, HTTPException, Body, Depends, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from typing import List, Dict
 from datetime import timedelta
@@ -45,6 +45,15 @@ async def get_single_event(event_id: str, current_user: User = Depends(auth_serv
     event = await event_service.get_event_by_id(db, event_id, owner_id=current_user.id)
     if not event: raise HTTPException(status_code=404, detail="Event not found")
     return EventPublic(id=str(event.id), owner_id=str(event.owner_id), **event.model_dump(exclude={'id', 'owner_id'}))
+
+@router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Events"])
+async def delete_an_event(event_id: str, current_user: User = Depends(auth_service.get_current_user), db: AsyncIOMotorDatabase = Depends(get_database)):
+    """Delete an event by its ID."""
+    success = await event_service.delete_event(db, event_id, owner_id=current_user.id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
 
 @router.post("/events/{event_id}/confirm", response_model=EventPublic, tags=["Event Actions"])
 async def confirm_an_event(event_id: str, current_user: User = Depends(auth_service.get_current_user), db: AsyncIOMotorDatabase = Depends(get_database)):
